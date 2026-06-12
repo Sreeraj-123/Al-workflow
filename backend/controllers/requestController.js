@@ -1,6 +1,6 @@
 const jwt = require("jsonwebtoken");
 
-const classifyRequest = require("../services/aiService");
+const classifyRequest = require("../services/aiServices");
 
 let requests = [];
 
