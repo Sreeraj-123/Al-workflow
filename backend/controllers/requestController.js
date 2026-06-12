@@ -1,11 +1,7 @@
 const jwt = require("jsonwebtoken");
+const db = require("../config/db");
 
 const classifyRequest = require("../services/aiServices");
-
-let requests = [];
-
-let notes = [];
-
 
 // LOGIN
 
@@ -36,64 +32,112 @@ exports.login = async (req, res) => {
 exports.createRequest = async (req, res) => {
   const { customerName, message } = req.body;
 
-  const request = {
-    id: requests.length + 1,
-    customerName,
-    message,
-    status: "queued",
-    createdAt: new Date(),
-  };
+  const db = require("../config/db");
 
-  requests.push(request);
+  const [result] = await db.query(
+    `
+    INSERT INTO customer_requests
+    (customer_name,message,status)
+    VALUES (?,?,?)
+    `,
+    [customerName, message, "queued"]
+  );
+
+  const requestId = result.insertId;
 
   res.status(201).json({
     message: "Request created",
-    request,
+    id: requestId,
   });
+  setTimeout(async () => {
+  const aiResult = classifyRequest(message);
 
-  setTimeout(() => {
-    const aiResult = classifyRequest(message);
+  await db.query(
+    `
+    UPDATE customer_requests
+    SET status = ?
+    WHERE id = ?
+    `,
+    ["classified", requestId]
+  );
 
-    request.aiClassification = aiResult;
+  console.log(
+    `Request ${requestId} classified`
+  );
 
-    request.status = "classified";
-
-    console.log(
-      `Request ${request.id} classified`
-    );
-  }, 3000);
+  await db.query(
+  `
+  INSERT INTO ai_classifications
+  (
+    request_id,
+    category,
+    priority,
+    summary,
+    confidence
+  )
+  VALUES (?,?,?,?,?)
+  `,
+  [
+    requestId,
+    aiResult.category,
+    aiResult.priority,
+    aiResult.summary,
+    aiResult.confidence
+  ]
+);
+}, 3000);
 };
 
 
 // GET ALL REQUESTS
 
 exports.getRequests = async (req, res) => {
-  res.json(requests);
+  const [requests] = await db.query(
+  `
+  SELECT *
+  FROM customer_requests
+  ORDER BY created_at DESC
+  `
+  );
+
+res.json(requests);
 };
 
 
 // GET REQUEST BY ID
 
 exports.getRequestById = async (req, res) => {
-  const id = Number(req.params.id);
+  const id = req.params.id;
 
-  const request = requests.find(
-    (r) => r.id === id
+  const [requests] = await db.query(
+    `
+    SELECT *
+    FROM customer_requests
+    WHERE id = ?
+    `,
+    [id]
   );
 
-  if (!request) {
+  if (requests.length === 0) {
     return res.status(404).json({
       message: "Request not found",
     });
   }
 
-  const requestNotes = notes.filter(
-    (note) => note.requestId === id
+  const request = requests[0];
+
+  const [notes] = await db.query(
+    `
+    SELECT *
+    FROM internal_notes
+    WHERE request_id = ?
+    `,
+    [id]
   );
 
   res.json({
     request,
-    notes: requestNotes,
+    notes,
   });
 };
 
@@ -101,25 +145,21 @@ exports.getRequestById = async (req, res) => {
 // UPDATE STATUS
 
 exports.updateStatus = async (req, res) => {
-  const id = Number(req.params.id);
+  const id = req.params.id;
 
   const { status } = req.body;
 
-  const request = requests.find(
-    (r) => r.id === id
+  await db.query(
+    `
+    UPDATE customer_requests
+    SET status = ?
+    WHERE id = ?
+    `,
+    [status, id]
   );
-
-  if (!request) {
-    return res.status(404).json({
-      message: "Request not found",
-    });
-  }
-
-  request.status = status;
 
   res.json({
     message: "Status updated",
-    request,
   });
 };
 
@@ -127,21 +167,20 @@ exports.updateStatus = async (req, res) => {
 // ADD NOTE
 
 exports.addNote = async (req, res) => {
-  const id = Number(req.params.id);
+  const id = req.params.id;
 
   const { note } = req.body;
 
-  const newNote = {
-    id: notes.length + 1,
-    requestId: id,
-    note,
-    createdAt: new Date(),
-  };
-
-  notes.push(newNote);
+  await db.query(
+    `
+    INSERT INTO internal_notes
+    (request_id,note)
+    VALUES (?,?)
+    `,
+    [id, note]
+  );
 
   res.status(201).json({
     message: "Note added",
-    note: newNote,
   });
 };
